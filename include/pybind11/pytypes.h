@@ -1159,6 +1159,14 @@ public:
     void clear() const { PyDict_Clear(ptr()); }
     bool contains(handle key) const { return PyDict_Contains(ptr(), key.ptr()) == 1; }
     bool contains(const char *key) const { return PyDict_Contains(ptr(), pybind11::str(key).ptr()) == 1; }
+    template <typename T> object get(handle key, T defaultv) const {
+        PyObject* ret = PyDict_GetItem(ptr(), key.ptr());
+        return ret ? reinterpret_steal<object>(handle(ret)) : detail::object_or_cast(defaultv);
+    }
+    template <typename T> object get(const char *key, T defaultv) const {
+        PyObject* ret = PyDict_GetItem(ptr(), pybind11::str(key).ptr());
+        return ret ? reinterpret_steal<object>(handle(ret)) : detail::object_or_cast(defaultv);
+    }
 
 private:
     /// Call the `dict` Python type -- always returns a new reference
