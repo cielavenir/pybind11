@@ -351,7 +351,15 @@ enum class return_value_policy : uint8_t {
         collected while Python is still using the child. More advanced
         variations of this scheme are also possible using combinations of
         return_value_policy::reference and the keep_alive call policy */
-    reference_internal
+    reference_internal,
+
+    automatic_notranspose,
+    automatic_reference_notranspose,
+    take_ownership_notranspose,
+    copy_notranspose,
+    move_notranspose,
+    reference_notranspose,
+    reference_internal_notranspose
 };
 
 NAMESPACE_BEGIN(detail)

@@ -34,6 +34,22 @@
 NAMESPACE_BEGIN(PYBIND11_NAMESPACE)
 NAMESPACE_BEGIN(detail)
 
+static bool isNoTranspose(return_value_policy policy)
+{
+    switch(policy) {
+    case return_value_policy::automatic_notranspose:
+    case return_value_policy::automatic_reference_notranspose:
+    case return_value_policy::take_ownership_notranspose:
+    case return_value_policy::copy_notranspose:
+    case return_value_policy::move_notranspose:
+    case return_value_policy::reference_notranspose:
+    case return_value_policy::reference_internal_notranspose:
+        return true;
+    default:
+        return false;
+    };
+}
+
 /// A life support system for temporary objects created by `type_caster::load()`.
 /// Adding a patient will keep it alive up until the enclosing function returns.
 class loader_life_support {
@@ -789,8 +805,8 @@ public:
         return cast(&src, policy, parent);
     }
 
-    static handle cast(itype &&src, return_value_policy, handle parent) {
-        return cast(&src, return_value_policy::move, parent);
+    static handle cast(itype &&src, return_value_policy policy, handle parent) {
+        return cast(&src, isNoTranspose(policy) ? return_value_policy::move_notranspose : return_value_policy::move, parent);
     }
 
     // Returns a (pointer, type_info) pair taking care of necessary RTTI type lookup for a
@@ -1566,7 +1582,7 @@ template <typename type> using cast_is_temporary_value_reference = bool_constant
 template <typename Return, typename SFINAE = void> struct return_value_policy_override {
     static return_value_policy policy(return_value_policy p) {
         return !std::is_lvalue_reference<Return>::value && !std::is_pointer<Return>::value
-            ? return_value_policy::move : p;
+            ? (isNoTranspose(p) ? return_value_policy::move_notranspose : return_value_policy::move) : p;
     }
 };
 

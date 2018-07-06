@@ -207,13 +207,16 @@ template <typename Type_> struct EigenProps {
 
 // Casts an Eigen type to numpy array.  If given a base, the numpy array references the src data,
 // otherwise it'll make a copy.  writeable lets you turn off the writeable flag for the array.
-template <typename props> handle eigen_array_cast(typename props::Type const &src, handle base = handle(), bool writeable = true) {
+template <typename props> handle eigen_array_cast(typename props::Type const &src, handle base = handle(), bool writeable = true, bool notranspose=false) {
     constexpr ssize_t elem_size = sizeof(typename props::Scalar);
     array a;
     if (props::vector)
         a = array({ src.size() }, { elem_size * src.innerStride() }, src.data(), base);
-    else
+    else if (!notranspose)
         a = array({ src.rows(), src.cols() }, { elem_size * src.rowStride(), elem_size * src.colStride() },
+                  src.data(), base);
+    else
+        a = array({ src.cols(), src.rows() }, { elem_size * src.colStride(), elem_size * src.rowStride() },
                   src.data(), base);
 
     if (!writeable)
@@ -227,10 +230,10 @@ template <typename props> handle eigen_array_cast(typename props::Type const &sr
 // the base will be set to None, and lifetime management is up to the caller).  The numpy array is
 // non-writeable if the given type is const.
 template <typename props, typename Type>
-handle eigen_ref_array(Type &src, handle parent = none()) {
+handle eigen_ref_array(Type &src, handle parent = none(), bool notranspose=false) {
     // none here is to get past array's should-we-copy detection, which currently always
     // copies when there is no base.  Setting the base to None should be harmless.
-    return eigen_array_cast<props>(src, parent, !std::is_const<Type>::value);
+    return eigen_array_cast<props>(src, parent, !std::is_const<Type>::value, notranspose);
 }
 
 // Takes a pointer to some dense, plain Eigen type, builds a capsule around it, then returns a numpy
@@ -238,9 +241,9 @@ handle eigen_ref_array(Type &src, handle parent = none()) {
 // its destruction to that of any dependent python objects.  Const-ness is determined by whether or
 // not the Type of the pointer given is const.
 template <typename props, typename Type, typename = enable_if_t<is_eigen_dense_plain<Type>::value>>
-handle eigen_encapsulate(Type *src) {
+handle eigen_encapsulate(Type *src, bool notranspose=false) {
     capsule base(src, [](void *o) { delete static_cast<Type *>(o); });
-    return eigen_ref_array<props>(*src, base);
+    return eigen_ref_array<props>(*src, base, notranspose);
 }
 
 // Type caster for regular, dense matrix types (e.g. MatrixXd), but not maps/refs/etc. of dense
@@ -303,6 +306,19 @@ private:
                 return eigen_ref_array<props>(*src);
             case return_value_policy::reference_internal:
                 return eigen_ref_array<props>(*src, parent);
+
+            case return_value_policy::take_ownership_notranspose:
+            case return_value_policy::automatic_notranspose:
+                return eigen_encapsulate<props>(src, true);
+            case return_value_policy::move_notranspose:
+                return eigen_encapsulate<props>(new CType(std::move(*src)), true);
+            case return_value_policy::copy_notranspose:
+                return eigen_array_cast<props>(*src, handle(), true, true);
+            case return_value_policy::reference_notranspose:
+            case return_value_policy::automatic_reference_notranspose:
+                return eigen_ref_array<props>(*src, none(), true);
+            case return_value_policy::reference_internal_notranspose:
+                return eigen_ref_array<props>(*src, parent, true);
             default:
                 throw cast_error("unhandled return_value_policy: should not happen!");
         };
@@ -311,23 +327,27 @@ private:
 public:
 
     // Normal returned non-reference, non-const value:
-    static handle cast(Type &&src, return_value_policy /* policy */, handle parent) {
-        return cast_impl(&src, return_value_policy::move, parent);
+    static handle cast(Type &&src, return_value_policy policy, handle parent) {
+        return cast_impl(&src, isNoTranspose(policy) ? return_value_policy::move_notranspose : return_value_policy::move, parent);
     }
     // If you return a non-reference const, we mark the numpy array readonly:
-    static handle cast(const Type &&src, return_value_policy /* policy */, handle parent) {
-        return cast_impl(&src, return_value_policy::move, parent);
+    static handle cast(const Type &&src, return_value_policy policy, handle parent) {
+        return cast_impl(&src, isNoTranspose(policy) ? return_value_policy::move_notranspose : return_value_policy::move, parent);
     }
     // lvalue reference return; default (automatic) becomes copy
     static handle cast(Type &src, return_value_policy policy, handle parent) {
         if (policy == return_value_policy::automatic || policy == return_value_policy::automatic_reference)
             policy = return_value_policy::copy;
+        else if (policy == return_value_policy::automatic_notranspose || policy == return_value_policy::automatic_reference_notranspose)
+            policy = return_value_policy::copy_notranspose;
         return cast_impl(&src, policy, parent);
     }
     // const lvalue reference return; default (automatic) becomes copy
     static handle cast(const Type &src, return_value_policy policy, handle parent) {
         if (policy == return_value_policy::automatic || policy == return_value_policy::automatic_reference)
             policy = return_value_policy::copy;
+        else if (policy == return_value_policy::automatic_notranspose || policy == return_value_policy::automatic_reference_notranspose)
+            policy = return_value_policy::copy_notranspose;
         return cast(&src, policy, parent);
     }
     // non-const pointer return
@@ -526,8 +546,8 @@ protected:
     using Matrix = Eigen::Matrix<typename Type::Scalar, Type::RowsAtCompileTime, Type::ColsAtCompileTime>;
     using props = EigenProps<Matrix>;
 public:
-    static handle cast(const Type &src, return_value_policy /* policy */, handle /* parent */) {
-        handle h = eigen_encapsulate<props>(new Matrix(src));
+    static handle cast(const Type &src, return_value_policy policy , handle /* parent */) {
+        handle h = eigen_encapsulate<props>(new Matrix(src), isNoTranspose(policy));
         return h;
     }
     static handle cast(const Type *src, return_value_policy policy, handle parent) { return cast(*src, policy, parent); }
