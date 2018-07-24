@@ -1161,11 +1161,11 @@ public:
     bool contains(const char *key) const { return PyDict_Contains(ptr(), pybind11::str(key).ptr()) == 1; }
     template <typename T> object get(handle key, T &&defaultv) const {
         PyObject* ret = PyDict_GetItem(ptr(), key.ptr());
-        return ret ? reinterpret_steal<object>(handle(ret)) : detail::object_or_cast(std::forward<T>(defaultv));
+        return reinterpret_borrow<object>(ret ? handle(ret) : detail::object_or_cast(std::forward<T>(defaultv)));
     }
     template <typename T> object get(const char *key, T &&defaultv) const {
-        PyObject* ret = PyDict_GetItem(ptr(), pybind11::str(key).ptr());
-        return ret ? reinterpret_steal<object>(handle(ret)) : detail::object_or_cast(std::forward<T>(defaultv));
+        PyObject* ret = PyDict_GetItemString(ptr(), key);
+        return reinterpret_borrow<object>(ret ? handle(ret) : detail::object_or_cast(std::forward<T>(defaultv)));
     }
 
 private:
