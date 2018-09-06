@@ -177,6 +177,7 @@ def test_dict(capture, doc):
 
     assert m.dict_keyword_constructor() == {"x": 1, "y": 2, "z": 3}
 
+    assert m.dict_get_test() == (1, 3)
 
 class CustomContains:
     d = {"key": None}

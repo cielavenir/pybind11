@@ -2132,6 +2132,10 @@ public:
         }
         return result == 1;
     }
+    template <typename T> object get(T &&key, T &&defaultv) const {
+        PyObject* ret = PyDict_GetItem(ptr(), detail::object_or_cast(std::forward<T>(key)).ptr());
+        return reinterpret_borrow<object>(ret ? handle(ret) : detail::object_or_cast(std::forward<T>(defaultv)));
+    }
 
 private:
     /// Call the `dict` Python type -- always returns a new reference

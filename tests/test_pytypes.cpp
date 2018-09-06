@@ -235,6 +235,10 @@ TEST_SUBMODULE(pytypes, m) {
         py::setattr(ns, "right", py::int_(2));
         return ns;
     });
+    m.def("dict_get_test", []() {
+        py::dict d("key"_a=1);
+        return py::make_tuple(d.get("key", 2), d.get("key2", 3));
+    });
 
     // test_str
     m.def("str_from_char_ssize_t", []() { return py::str{"red", (py::ssize_t) 3}; });
