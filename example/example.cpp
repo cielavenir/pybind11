@@ -13,9 +13,11 @@ struct Foo {
 public:
     Foo() {}
     ~Foo() {}
-    void SetVecInt(std::vector<int> a_) { a = std::move(a_); }
-    const std::vector<int>& GetVecInt() const& { return a; }
-    std::vector<int> a;
+    void SetVecInt(std::vector<int>&& vecint_) { vecint = std::move(vecint_); }
+    const std::vector<int>& GetVecInt() const& { return vecint; }
+    std::vector<int> vecint;
+
+    std::vector<std::vector<double>> matdouble;
 };
 
 // PYBIND11_MODULE(example, m) {
@@ -31,11 +33,20 @@ PYBIND11_MODULE(example, m)
 
 	py::class_<Foo>(m, "Foo")
     .def(py::init<>())
-    .def("SetVecInt", [](Foo &self, const std::vector<int>& list) {
-        self.SetVecInt(list);
-    })
+    .def("SetVecInt", [](Foo &self, std::vector<int>&& list) {
+        self.SetVecInt(std::move(list));
+    }, "Set a vector of integers to `vecint`")
     .def("GetVecInt", [](const Foo &self) {
-        return self.a;
-    })
+        return self.vecint;
+    }, "Get `vecint`, a vector of integers")
+    .def_readwrite("vecint", &Foo::vecint)
+    //
+    .def("SetMatDouble", [](Foo &self, std::vector<std::vector<double>>&& list) {
+        self.matdouble = std::move(list);
+    }, "Set a matrix of doubles to `matdouble`")
+    .def("GetMatDouble", [](const Foo &self) {
+        return self.matdouble;
+    }, "Get `matdouble`, a matrix of doubles")
+    .def_readwrite("matdouble", &Foo::matdouble)
     ;
 }
