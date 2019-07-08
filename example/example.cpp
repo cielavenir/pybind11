@@ -1,52 +1,26 @@
 #include <vector>
 #include <pybind11/pybind11.h>
 // implicitly conversion to std::vector<int>
-#include <pybind11/stl.h>
+#include <pybind11/eigen.h>
 
 namespace py = pybind11;
 
-// int add(int i, int j) {
-//     return i + j;
-// }
-
-struct Foo {
+class MyClass {
+    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> big_mat;
 public:
-    Foo() {}
-    ~Foo() {}
-    void SetVecInt(std::vector<int>&& vecint_) { vecint = std::move(vecint_); }
-    const std::vector<int>& GetVecInt() const& { return vecint; }
-    std::vector<int> vecint;
-
-    std::vector<std::vector<double>> matdouble;
+    MyClass() : big_mat(10000, 10000) {
+        big_mat.setZero();
+    }
+    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> &getMatrix() { return big_mat; }
+    const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> &viewMatrix() { return big_mat; }
 };
 
-// PYBIND11_MODULE(example, m) {
-//     m.doc() = "pybind11 example plugin"; // optional module docstring
-
-//     m.def("add", &add, "A function which adds two numbers");
-// }
-
-PYBIND11_MODULE(example, m)
-{
-	m.doc() = "";
-	using namespace py::literals;
-
-	py::class_<Foo>(m, "Foo")
+PYBIND11_MODULE(example, m) {
+// Later, in binding code:
+py::class_<MyClass>(m, "MyClass")
     .def(py::init<>())
-    .def("SetVecInt", [](Foo &self, std::vector<int>&& list) {
-        self.SetVecInt(std::move(list));
-    }, "Set a vector of integers to `vecint`")
-    .def("GetVecInt", [](const Foo &self) {
-        return self.vecint;
-    }, "Get `vecint`, a vector of integers")
-    .def_readwrite("vecint", &Foo::vecint)
-    //
-    .def("SetMatDouble", [](Foo &self, std::vector<std::vector<double>>&& list) {
-        self.matdouble = std::move(list);
-    }, "Set a matrix of doubles to `matdouble`")
-    .def("GetMatDouble", [](const Foo &self) {
-        return self.matdouble;
-    }, "Get `matdouble`, a matrix of doubles")
-    .def_readwrite("matdouble", &Foo::matdouble)
+    .def("copy_matrix", &MyClass::getMatrix) // Makes a copy!
+    .def("get_matrix", &MyClass::getMatrix, py::return_value_policy::reference_internal)
+    .def("view_matrix", &MyClass::viewMatrix, py::return_value_policy::reference_internal)
     ;
 }

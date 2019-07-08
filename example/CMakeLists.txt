@@ -22,7 +22,7 @@ set(MUJIN_INSTALL_INCLUDE_DIR ${MUJIN_INSTALL_DIR}/include)
 set(example_files example.cpp)
 
 # include
-include_directories(${MUJIN_INSTALL_INCLUDE_DIR})
+include_directories(${MUJIN_INSTALL_INCLUDE_DIR} ${MUJIN_INSTALL_INCLUDE_DIR}/eigen3)
 message(STATUS "MUJIN_INSTALL_INCLUDE_DIR=${MUJIN_INSTALL_INCLUDE_DIR}")
 set(USE_PYTHON3 no CACHE BOOL "switch between python and python3")
 if(NOT APPLE)
@@ -42,12 +42,19 @@ link_directories(${BOOST_LIBRARYDIR})
 
 # archive
 add_library(example SHARED ${example_files})
-target_link_libraries(example python3.7)
+
+if(APPLE)
+	target_link_libraries(example python3.7)
+endif()
 
 # prefix of library (no "lib")
 # python3-config --extension-suffix
 if(USE_PYTHON3)
-  set_target_properties(example PROPERTIES PREFIX "" SUFFIX ".cpython-37m-darwin.so")
+  if(APPLE)
+  	set_target_properties(example PROPERTIES PREFIX "" SUFFIX ".cpython-37m-darwin.so")
+  else()
+  	set_target_properties(example PROPERTIES PREFIX "")
+  endif()
 else()
   set_target_properties(example PROPERTIES PREFIX "")
 endif()
