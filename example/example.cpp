@@ -1,5 +1,8 @@
 #include <vector>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"  // Woody: LOL!
 #include <pybind11/pybind11.h>
+#pragma GCC diagnostic pop
 // implicitly conversion to std::vector<int>
 #include <pybind11/eigen.h>
 
