@@ -1383,6 +1383,12 @@ public:
                 m[kv.first] = kv.second;
             return m;
         }, return_value_policy::copy);
+        def_property_readonly_static("names", [m_entries_ptr](object /* self */) {
+            dict m;
+            for (const auto &kv : reinterpret_borrow<dict>(m_entries_ptr))
+                m[kv.first] = kv.second;
+            return m;
+        }, return_value_policy::copy);
         def_property_readonly_static("values", [m_entries_ptr](object /* self */) {
             dict m;
             for (const auto &kv : reinterpret_borrow<dict>(m_entries_ptr))
