@@ -1376,14 +1376,14 @@ public:
                 if (pybind11::cast<Type>(kv.second) == value)
                     return pybind11::str("{}.{}").format(name, kv.first);
             }
-            return pybind11::str("{}.???").format(name);
+            return pybind11::str("{}({})").format(name, (Scalar)value);
         });
         def("__str__", [name, m_entries_ptr](Type value) -> pybind11::str {
             for (const auto &kv : reinterpret_borrow<dict>(m_entries_ptr)) {
                 if (pybind11::cast<Type>(kv.second) == value)
                     return pybind11::str(kv.first);
             }
-            return pybind11::str("???");
+            return pybind11::str("{}").format((Scalar)value);
         });
         def_property_readonly("name", [m_entries_ptr](Type value) -> pybind11::str {
             for (const auto &kv : reinterpret_borrow<dict>(m_entries_ptr)) {
