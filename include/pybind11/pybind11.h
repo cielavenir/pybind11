@@ -2069,7 +2069,8 @@ struct enum_base {
         m_base.attr("__str__") = cpp_function(
             [](handle arg) -> str {
                 object type_name = type::handle_of(arg).attr("__name__");
-                return pybind11::str("{}.{}").format(std::move(type_name), enum_name(arg));
+                // return pybind11::str("{}.{}").format(std::move(type_name), enum_name(arg));
+                return pybind11::str("{}").format(enum_name(arg));
             },
             name("__str__"),
             is_method(m_base));
@@ -2114,6 +2115,33 @@ struct enum_base {
                                                              return m;
                                                          },
                                                          name("__members__")),
+                                                     none(),
+                                                     none(),
+                                                     "");
+
+        m_base.attr("names") = static_property(cpp_function(
+                                                         [](handle arg) -> dict {
+                                                             dict entries = arg.attr("__entries"),
+                                                                  m;
+                                                             for (auto kv : entries) {
+                                                                 m[kv.first] = kv.second[int_(0)];
+                                                             }
+                                                             return m;
+                                                         },
+                                                         name("names")),
+                                                     none(),
+                                                     none(),
+                                                     "");
+        m_base.attr("values") = static_property(cpp_function(
+                                                         [](handle arg) -> dict {
+                                                             dict entries = arg.attr("__entries"),
+                                                                  m;
+                                                             for (auto kv : entries) {
+                                                                 m[int_(kv.second[int_(0)])] = kv.second[int_(0)];
+                                                             }
+                                                             return m;
+                                                         },
+                                                         name("values")),
                                                      none(),
                                                      none(),
                                                      "");
