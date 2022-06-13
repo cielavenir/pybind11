@@ -198,6 +198,8 @@ Using ``find_package`` with version info is not recommended except for release v
   find_package(pybind11 2.0 EXACT CONFIG REQUIRED)
 
 #]=============================================================================]
+cmake_policy(SET CMP0057 NEW)  # IN_LIST operator is used
+
 @PACKAGE_INIT@
 
 # Location of pybind11/pybind11.h
