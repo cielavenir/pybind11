@@ -1713,6 +1713,16 @@ public:
     bool contains(T &&key) const {
         return PyDict_Contains(m_ptr, detail::object_or_cast(std::forward<T>(key)).ptr()) == 1;
     }
+    template <typename T>
+    object get(handle key, T &&defaultv) const {
+        PyObject* ret = PyDict_GetItem(ptr(), key.ptr());
+        return reinterpret_borrow<object>(ret ? handle(ret) : detail::object_or_cast(std::forward<T>(defaultv)));
+    }
+    template <typename T>
+    object get(const char *key, T &&defaultv) const {
+        PyObject* ret = PyDict_GetItemString(ptr(), key);
+        return reinterpret_borrow<object>(ret ? handle(ret) : detail::object_or_cast(std::forward<T>(defaultv)));
+    }
 
 private:
     /// Call the `dict` Python type -- always returns a new reference
