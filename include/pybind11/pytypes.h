@@ -2056,9 +2056,10 @@ iterator object_api<D>::end() const {
     return iterator::sentinel();
 }
 template <typename D>
-template <typename T> item_accessor object_api<D>::operator[](T &&key) const {
-    return {derived(), reinterpret_borrow<object>(detail::object_or_cast(std::forward<T>(key)))};
- }
+template <typename T>
+item_accessor object_api<D>::operator[](T &&key) const {
+    return {derived(), detail::object_or_cast(std::forward<T>(key)).cast<object>()};
+}
 template <typename D>
 obj_attr_accessor object_api<D>::attr(handle key) const {
     return {derived(), reinterpret_borrow<object>(key)};
