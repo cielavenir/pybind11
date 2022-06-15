@@ -87,6 +87,11 @@ TEST_SUBMODULE(pytypes, m) {
     m.def("tuple_size_t", []() { return py::tuple{(py::size_t) 0}; });
     m.def("get_tuple", []() { return py::make_tuple(42, py::none(), "spam"); });
 
+    m.def("access_tuple", []() {
+        py::tuple tpl = py::make_tuple(1, 2);
+        return tpl[1];
+    });
+
 #if PY_VERSION_HEX >= 0x03030000
     // test_simple_namespace
     m.def("get_simple_namespace", []() {
