@@ -122,6 +122,8 @@ def test_tuple():
     assert m.tuple_size_t() == ()
     assert m.get_tuple() == (42, None, "spam")
     assert m.access_tuple() == 2
+    assert m.access_tuple_as_object_with_int_index() == 2
+    assert m.access_tuple_as_object_with_int_index_multidimension() == 6
 
 
 @pytest.mark.skipif("env.PY2")

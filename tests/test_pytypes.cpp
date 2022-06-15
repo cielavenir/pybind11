@@ -91,6 +91,14 @@ TEST_SUBMODULE(pytypes, m) {
         py::tuple tpl = py::make_tuple(1, 2);
         return tpl[1];
     });
+    m.def("access_tuple_as_object_with_int_index", []() {
+        py::object tpl = py::make_tuple(1, 2);
+        return tpl[1];
+    });
+    m.def("access_tuple_as_object_with_int_index_multidimension", []() {
+        py::object tpl = py::make_tuple(py::make_tuple(1, 2, 3), py::make_tuple(4, 5, 6));
+        return tpl[1][2];
+    });
 
 #if PY_VERSION_HEX >= 0x03030000
     // test_simple_namespace
