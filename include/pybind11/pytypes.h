@@ -87,6 +87,7 @@ public:
     item_accessor operator[](handle key) const;
     /// See above (the only difference is that they key is provided as a string literal)
     item_accessor operator[](const char *key) const;
+    item_accessor operator[](size_t key) const;
 
     /** \rst
         Return an internal functor to access the object's attributes. Casting the
@@ -2064,6 +2065,10 @@ item_accessor object_api<D>::operator[](handle key) const {
 template <typename D>
 item_accessor object_api<D>::operator[](const char *key) const {
     return {derived(), pybind11::str(key)};
+}
+template <typename D>
+item_accessor object_api<D>::operator[](size_t key) const {
+    return {derived(), pybind11::int_(key)};
 }
 template <typename D>
 obj_attr_accessor object_api<D>::attr(handle key) const {
