@@ -152,6 +152,7 @@ def test_tuple():
     assert m.tuple_ssize_t() == ()
     assert m.tuple_size_t() == ()
     assert m.get_tuple() == (42, None, "spam")
+    assert m.access_tuple() == 2
 
 
 def test_simple_namespace():
