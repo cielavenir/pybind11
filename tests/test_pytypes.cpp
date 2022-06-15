@@ -87,8 +87,12 @@ TEST_SUBMODULE(pytypes, m) {
     m.def("tuple_size_t", []() { return py::tuple{(py::size_t) 0}; });
     m.def("get_tuple", []() { return py::make_tuple(42, py::none(), "spam"); });
     m.def("access_tuple_with_int_index", []() {
-        py::object tpl = py::make_tuple(py::make_tuple(1, 2), py::make_tuple(3, 4));
-        return tpl[0][1];
+        py::object tpl = py::make_tuple(1, 2);
+        return tpl[1];
+    });
+    m.def("access_tuple_with_int_index_multidimension", []() {
+        py::object tpl = py::make_tuple(py::make_tuple(1, 2, 3), py::make_tuple(3, 4, 5));
+        return tpl[1][2];
     });
 
 #if PY_VERSION_HEX >= 0x03030000
