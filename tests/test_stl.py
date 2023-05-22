@@ -38,8 +38,8 @@ def test_array(doc):
     assert lst == [1, 2]
     assert m.load_array(lst)
 
-    assert doc(m.cast_array) == "cast_array() -> Annotated[List, 2]"
-    assert doc(m.load_array) == "load_array(arg0: Annotated[List, 2]) -> bool"
+    assert doc(m.cast_array) == "cast_array() -> Annotated[List[int], 2]"
+    assert doc(m.load_array) == "load_array(arg0: Annotated[List[int], 2]) -> bool"
 
 
 def test_valarray(doc):
@@ -48,8 +48,8 @@ def test_valarray(doc):
     assert lst == [1, 4, 9]
     assert m.load_valarray(lst)
 
-    assert doc(m.cast_valarray) == "cast_valarray() -> List[int]"
-    assert doc(m.load_valarray) == "load_valarray(arg0: List[int]) -> bool"
+    assert doc(m.cast_valarray) == "cast_valarray() -> Annotated[List[int], 3]"
+    assert doc(m.load_valarray) == "load_valarray(arg0: Annotated[List[int], 3]) -> bool"
 
 
 def test_map(doc):
