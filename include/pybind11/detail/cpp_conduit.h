@@ -20,14 +20,21 @@ inline bool type_is_managed_by_our_internals(PyTypeObject *type_obj) {
     auto &internals = get_internals();
     return bool(internals.registered_types_py.find(type_obj)
                 != internals.registered_types_py.end());
+#elif defined(PYBIND11_LIMITED_API)
+    return (PyType_GetSlot(type_obj, Py_tp_new) == reinterpret_cast<void *>(pybind11_object_new));
 #else
     return (type_obj->tp_new == pybind11_object_new);
 #endif
 }
 
 inline bool is_instance_method_of_type(PyTypeObject *type_obj, PyObject *attr_name) {
+#if defined(PYBIND11_LIMITED_API)
+    auto descr = reinterpret_steal<object>(limited_api_type_lookup(type_obj, attr_name));
+    return (descr && limited_api_instancemethod_check(descr.ptr()));
+#else
     PyObject *descr = _PyType_Lookup(type_obj, attr_name);
     return ((descr != nullptr) && PyInstanceMethod_Check(descr));
+#endif
 }
 
 inline object try_get_cpp_conduit_method(PyObject *obj) {

@@ -26,7 +26,9 @@ class gil_scoped_release_simple {
 public:
     // PRECONDITION: The GIL must be held when this constructor is called.
     gil_scoped_release_simple() {
+#if !defined(PYBIND11_LIMITED_API)
         assert(PyGILState_Check());
+#endif
         state = PyEval_SaveThread();
     }
     gil_scoped_release_simple(const gil_scoped_release_simple &) = delete;
