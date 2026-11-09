@@ -899,11 +899,28 @@ protected:
             }
         }
 
+#if defined(PYBIND11_LIMITED_API)
+        // PyCFunctionObject is opaque, but its m_ml is the PyMethodDef owned by the first record
+        // of the overload chain that has one (see `rec->def = new PyMethodDef()` above).
+        auto *func = m_ptr;
+        PyMethodDef *method_def = nullptr;
+        for (auto *it = chain_start; it != nullptr && method_def == nullptr; it = it->next) {
+            method_def = it->def;
+        }
+        if (method_def == nullptr) {
+            pybind11_fail("cpp_function::initialize_generic(): PyMethodDef not found");
+        }
+        // Install docstring if it's non-empty (when at least one option is enabled)
+        auto *doc = signatures.empty() ? nullptr : PYBIND11_COMPAT_STRDUP(signatures.c_str());
+        std::free(const_cast<char *>(method_def->ml_doc));
+        method_def->ml_doc = doc;
+#else
         auto *func = reinterpret_cast<PyCFunctionObject *>(m_ptr);
         // Install docstring if it's non-empty (when at least one option is enabled)
         auto *doc = signatures.empty() ? nullptr : PYBIND11_COMPAT_STRDUP(signatures.c_str());
         std::free(const_cast<char *>(PYBIND11_PYCFUNCTION_GET_DOC(func)));
         PYBIND11_PYCFUNCTION_SET_DOC(func, doc);
+#endif
 
         if (rec->is_method) {
             m_ptr = PYBIND11_INSTANCE_METHOD_NEW(m_ptr, rec->scope.ptr());
@@ -1794,7 +1811,8 @@ using module = module_;
 /// Return a dictionary representing the global variables in the current execution frame,
 /// or ``__main__.__dict__`` if there is no frame (usually when the interpreter is embedded).
 inline dict globals() {
-#if PY_VERSION_HEX >= 0x030d0000
+#if PY_VERSION_HEX >= 0x030d0000                                                                  \
+    && (!defined(PYBIND11_LIMITED_API) || Py_LIMITED_API + 0 >= 0x030D0000)
     PyObject *p = PyEval_GetFrameGlobals();
     return p ? reinterpret_steal<dict>(p)
              : reinterpret_borrow<dict>(module_::import("__main__").attr("__dict__").ptr());
@@ -1888,7 +1906,7 @@ protected:
 
     /// Helper function which tags all parents of a type using mult. inheritance
     void mark_parents_nonsimple(PyTypeObject *value) {
-        auto t = reinterpret_borrow<tuple>(value->tp_bases);
+        auto t = reinterpret_steal<tuple>(get_type_bases(value));
         for (handle h : t) {
             auto *tinfo2 = get_type_info(reinterpret_cast<PyTypeObject *>(h.ptr()));
             if (tinfo2) {
@@ -1900,10 +1918,17 @@ protected:
 
     void install_buffer_funcs(buffer_info *(*get_buffer)(PyObject *, void *),
                               void *get_buffer_data) {
+#if defined(PYBIND11_LIMITED_API)
+        auto *type = reinterpret_cast<PyTypeObject *>(m_ptr);
+        auto *tinfo = detail::get_type_info(type);
+
+        if (PyType_GetSlot(type, Py_bf_getbuffer) == nullptr) {
+#else
         auto *type = reinterpret_cast<PyHeapTypeObject *>(m_ptr);
         auto *tinfo = detail::get_type_info(&type->ht_type);
 
         if (!type->ht_type.tp_as_buffer) {
+#endif
             pybind11_fail("To be able to register buffer protocol support for the type '"
                           + get_fully_qualified_tp_name(tinfo->type)
                           + "' the associated class<>(..) invocation must "
@@ -1923,7 +1948,12 @@ protected:
         const auto has_doc = (rec_func != nullptr) && (rec_func->doc != nullptr)
                              && pybind11::options::show_user_defined_docstrings();
         auto property = handle(reinterpret_cast<PyObject *>(
-            is_static ? get_internals().static_property_type : &PyProperty_Type));
+            is_static ? get_internals().static_property_type
+#if defined(PYBIND11_LIMITED_API)
+                      : reinterpret_cast<PyTypeObject *>(detail::limited_api_property_type())));
+#else
+                      : &PyProperty_Type));
+#endif
         attr(name) = property(fget.ptr() ? fget : none(),
                               fset.ptr() ? fset : none(),
                               /*deleter*/ none(),
@@ -2980,7 +3010,11 @@ struct enum_base {
 
     PYBIND11_NOINLINE void init(bool is_arithmetic, bool is_convertible) {
         m_base.attr("__entries") = dict();
+#if defined(PYBIND11_LIMITED_API)
+        auto property = handle(detail::limited_api_property_type());
+#else
         auto property = handle(reinterpret_cast<PyObject *>(&PyProperty_Type));
+#endif
         auto static_property
             = handle(reinterpret_cast<PyObject *>(get_internals().static_property_type));
 
@@ -3013,11 +3047,19 @@ struct enum_base {
                     [](handle arg) -> std::string {
                         std::string docstring;
                         dict entries = arg.attr("__entries");
+#if defined(PYBIND11_LIMITED_API)
+                        if (const auto *tp_doc = static_cast<const char *>(PyType_GetSlot(
+                                reinterpret_cast<PyTypeObject *>(arg.ptr()), Py_tp_doc))) {
+                            docstring += std::string(tp_doc);
+                            docstring += "\n\n";
+                        }
+#else
                         if ((reinterpret_cast<PyTypeObject *>(arg.ptr()))->tp_doc) {
                             docstring += std::string(
                                 reinterpret_cast<PyTypeObject *>(arg.ptr())->tp_doc);
                             docstring += "\n\n";
                         }
+#endif
                         docstring += "Members:";
                         for (auto kv : entries) {
                             auto key = std::string(pybind11::str(kv.first));
@@ -3764,7 +3806,8 @@ register_local_exception(handle scope, const char *name, handle base = PyExc_Exc
 
 PYBIND11_NAMESPACE_BEGIN(detail)
 PYBIND11_NOINLINE void print(const tuple &args, const dict &kwargs) {
-#if PY_VERSION_HEX >= 0x030D0000
+#if PY_VERSION_HEX >= 0x030D0000                                                                  \
+    && (!defined(PYBIND11_LIMITED_API) || Py_LIMITED_API + 0 >= 0x030D0000)
     auto builtins = reinterpret_steal<dict>(PyEval_GetFrameBuiltins());
 #else
     auto builtins = reinterpret_borrow<dict>(PyEval_GetBuiltins());
@@ -3832,7 +3875,34 @@ get_type_override(const void *this_ptr, const type_info *this_type, const char *
 
     /* Don't call dispatch code if invoked from overridden function.
        Unfortunately this doesn't work on PyPy and GraalPy. */
-#if !defined(PYPY_VERSION) && !defined(GRAALVM_PYTHON)
+#if defined(PYBIND11_LIMITED_API)
+    // Same check as below, using the frame object's Python-level attributes.
+    {
+        object frame;
+        try {
+            frame = module_::import("sys").attr("_getframe")(0);
+        } catch (error_already_set &) {
+            // No Python frame (e.g. called from a C++ thread).
+        }
+        if (frame && !frame.is_none()) {
+            object f_code = frame.attr("f_code");
+            if (std::string(str(f_code.attr("co_name"))) == name
+                && f_code.attr("co_argcount").cast<int>() > 0) {
+                object self_arg = f_code.attr("co_varnames")[int_(0)];
+                object locals = frame.attr("f_locals");
+                PyObject *self_caller = PyObject_GetItem(locals.ptr(), self_arg.ptr());
+                if (self_caller == nullptr) {
+                    PyErr_Clear();
+                } else {
+                    Py_DECREF(self_caller);
+                    if (self_caller == self.ptr()) {
+                        return function();
+                    }
+                }
+            }
+        }
+    }
+#elif !defined(PYPY_VERSION) && !defined(GRAALVM_PYTHON)
     PyFrameObject *frame = PyThreadState_GetFrame(PyThreadState_Get());
     if (frame != nullptr) {
         PyCodeObject *f_code = PyFrame_GetCode(frame);

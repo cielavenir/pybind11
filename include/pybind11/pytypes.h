@@ -336,11 +336,14 @@ private:
             "used for all translation units linked into a given pybind11 extension, otherwise "
             "there will be ODR violations.",
             function_name.c_str());
-        if (Py_TYPE(m_ptr)->tp_name != nullptr) {
-            fprintf(stderr,
-                    " The failing %s call was triggered on a %s object.",
-                    function_name.c_str(),
-                    Py_TYPE(m_ptr)->tp_name);
+        {
+            std::string tp_name = detail::get_tp_name(Py_TYPE(m_ptr));
+            if (!tp_name.empty()) {
+                fprintf(stderr,
+                        " The failing %s call was triggered on a %s object.",
+                        function_name.c_str(),
+                        tp_name.c_str());
+            }
         }
         fprintf(stderr, "\n");
         fflush(stderr);
@@ -501,11 +504,11 @@ T reinterpret_steal(handle h) {
 PYBIND11_NAMESPACE_BEGIN(detail)
 
 // Equivalent to obj.__class__.__name__ (or obj.__name__ if obj is a class).
-inline const char *obj_class_name(PyObject *obj) {
+inline std::string obj_class_name(PyObject *obj) {
     if (PyType_Check(obj)) {
-        return reinterpret_cast<PyTypeObject *>(obj)->tp_name;
+        return get_tp_name(reinterpret_cast<PyTypeObject *>(obj));
     }
-    return Py_TYPE(obj)->tp_name;
+    return get_tp_name(Py_TYPE(obj));
 }
 
 std::string error_string();
@@ -535,8 +538,8 @@ struct error_fetch_and_normalize {
                           + " called while "
                             "Python error indicator not set.");
         }
-        const char *exc_type_name_orig = detail::obj_class_name(m_type.ptr());
-        if (exc_type_name_orig == nullptr) {
+        std::string exc_type_name_orig = detail::obj_class_name(m_type.ptr());
+        if (exc_type_name_orig.empty()) {
             pybind11_fail("Internal error: " + std::string(called)
                           + " failed to obtain the name "
                             "of the original active exception type.");
@@ -563,8 +566,8 @@ struct error_fetch_and_normalize {
                           + " failed to normalize the "
                             "active exception.");
         }
-        const char *exc_type_name_norm = detail::obj_class_name(m_type.ptr());
-        if (exc_type_name_norm == nullptr) {
+        std::string exc_type_name_norm = detail::obj_class_name(m_type.ptr());
+        if (exc_type_name_norm.empty()) {
             pybind11_fail("Internal error: " + std::string(called)
                           + " failed to obtain the name "
                             "of the normalized active exception type.");
@@ -658,7 +661,39 @@ struct error_fetch_and_normalize {
 
         bool have_trace = false;
         if (m_trace) {
-#if !defined(PYPY_VERSION) && !defined(GRAALVM_PYTHON)
+#if defined(PYBIND11_LIMITED_API)
+            // Same as below, but through attribute access only.
+            auto get_attr = [](PyObject *obj, const char *name) -> object {
+                auto result = reinterpret_steal<object>(PyObject_GetAttrString(obj, name));
+                if (!result) {
+                    PyErr_Clear();
+                }
+                return result;
+            };
+            object tb = m_trace;
+            for (object next = get_attr(tb.ptr(), "tb_next"); next && !next.is_none();
+                 next = get_attr(tb.ptr(), "tb_next")) {
+                tb = next;
+            }
+            object frame = get_attr(tb.ptr(), "tb_frame");
+            result += "\n\nAt:\n";
+            while (frame && !frame.is_none()) {
+                object f_code = get_attr(frame.ptr(), "f_code");
+                object f_lineno = get_attr(frame.ptr(), "f_lineno");
+                object co_filename = f_code ? get_attr(f_code.ptr(), "co_filename") : object();
+                object co_name = f_code ? get_attr(f_code.ptr(), "co_name") : object();
+                result += "  ";
+                result += co_filename ? limited_api_utf8(co_filename.release().ptr()) : "?";
+                result += '(';
+                result += f_lineno ? std::to_string(PyLong_AsLong(f_lineno.ptr())) : "?";
+                result += "): ";
+                result += co_name ? limited_api_utf8(co_name.release().ptr()) : "?";
+                result += '\n';
+                frame = get_attr(frame.ptr(), "f_back");
+            }
+            PyErr_Clear();
+            have_trace = true;
+#elif !defined(PYPY_VERSION) && !defined(GRAALVM_PYTHON)
             auto *tb = reinterpret_cast<PyTracebackObject *>(m_trace.ptr());
 
             // Get the deepest trace possible.
@@ -948,13 +983,246 @@ inline ssize_t hash(handle obj) {
 /// @} python_builtins
 
 PYBIND11_NAMESPACE_BEGIN(detail)
+#if defined(PYBIND11_LIMITED_API)
+// The limited API has neither PyInstanceMethod_* nor PyMethod_*, so pybind11 provides its own
+// minimal `instancemethod` type: a descriptor that binds `func` to instances and returns `func`
+// itself when accessed through the class.
+#    define PYBIND11_INSTANCEMETHOD_TYPE_NAME "pybind11_builtins.pybind11_instancemethod"
+
+struct limited_api_instancemethod {
+    PyObject_HEAD
+    PyObject *func;
+};
+
+/// `types.MethodType` (cached; the reference is intentionally leaked).
+inline PyObject *limited_api_method_type() {
+    static PyObject *method_type = []() -> PyObject * {
+        PyObject *types_module = PyImport_ImportModule("types");
+        if (types_module == nullptr) {
+            throw error_already_set();
+        }
+        PyObject *result = PyObject_GetAttrString(types_module, "MethodType");
+        Py_DECREF(types_module);
+        if (result == nullptr) {
+            throw error_already_set();
+        }
+        return result;
+    }();
+    return method_type;
+}
+
+/// `builtins.property` (cached; the reference is intentionally leaked).
+inline PyObject *limited_api_property_type() {
+    static PyObject *property_type = []() -> PyObject * {
+        PyObject *builtins_module = PyImport_ImportModule("builtins");
+        if (builtins_module == nullptr) {
+            throw error_already_set();
+        }
+        PyObject *result = PyObject_GetAttrString(builtins_module, "property");
+        Py_DECREF(builtins_module);
+        if (result == nullptr) {
+            throw error_already_set();
+        }
+        return result;
+    }();
+    return property_type;
+}
+
+/// `builtins.staticmethod` (cached; the reference is intentionally leaked).
+inline PyObject *limited_api_staticmethod_type() {
+    static PyObject *staticmethod_type = []() -> PyObject * {
+        PyObject *builtins_module = PyImport_ImportModule("builtins");
+        if (builtins_module == nullptr) {
+            throw error_already_set();
+        }
+        PyObject *result = PyObject_GetAttrString(builtins_module, "staticmethod");
+        Py_DECREF(builtins_module);
+        if (result == nullptr) {
+            throw error_already_set();
+        }
+        return result;
+    }();
+    return staticmethod_type;
+}
+
+extern "C" inline void limited_api_instancemethod_dealloc(PyObject *self) {
+    PyTypeObject *type = Py_TYPE(self);
+    PyObject_GC_UnTrack(self);
+    Py_CLEAR(reinterpret_cast<limited_api_instancemethod *>(self)->func);
+    PyObject_GC_Del(self);
+    Py_DECREF(type);
+}
+
+extern "C" inline int limited_api_instancemethod_traverse(PyObject *self, visitproc visit, void *arg) {
+    Py_VISIT(reinterpret_cast<limited_api_instancemethod *>(self)->func);
+    Py_VISIT(Py_TYPE(self));
+    return 0;
+}
+
+extern "C" inline int limited_api_instancemethod_clear(PyObject *self) {
+    Py_CLEAR(reinterpret_cast<limited_api_instancemethod *>(self)->func);
+    return 0;
+}
+
+extern "C" inline PyObject *
+limited_api_instancemethod_descr_get(PyObject *self, PyObject *obj, PyObject * /*type*/) {
+    PyObject *func = reinterpret_cast<limited_api_instancemethod *>(self)->func;
+    if (obj == nullptr) {
+        Py_INCREF(func);
+        return func;
+    }
+    PyObject *method_type = nullptr;
+    try {
+        method_type = limited_api_method_type();
+    } catch (error_already_set &e) {
+        e.restore();
+        return nullptr;
+    }
+    return PyObject_CallFunctionObjArgs(method_type, func, obj, nullptr);
+}
+
+extern "C" inline PyObject *
+limited_api_instancemethod_call(PyObject *self, PyObject *args, PyObject *kwargs) {
+    return PyObject_Call(reinterpret_cast<limited_api_instancemethod *>(self)->func, args, kwargs);
+}
+
+extern "C" inline PyObject *limited_api_instancemethod_getattro(PyObject *self, PyObject *name) {
+    PyObject *result = PyObject_GenericGetAttr(self, name);
+    if (result == nullptr && PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        PyErr_Clear();
+        result = PyObject_GetAttr(reinterpret_cast<limited_api_instancemethod *>(self)->func, name);
+    }
+    return result;
+}
+
+extern "C" inline PyObject *limited_api_instancemethod_repr(PyObject *self) {
+    PyObject *func = reinterpret_cast<limited_api_instancemethod *>(self)->func;
+    PyObject *func_name = PyObject_GetAttrString(func, "__name__");
+    if (func_name == nullptr) {
+        PyErr_Clear();
+        return PyUnicode_FromFormat("<instancemethod at %p>", self);
+    }
+    PyObject *result = PyUnicode_FromFormat("<instancemethod %S at %p>", func_name, self);
+    Py_DECREF(func_name);
+    return result;
+}
+
+extern "C" inline PyObject *limited_api_instancemethod_get_doc(PyObject *self, void *) {
+    return PyObject_GetAttrString(reinterpret_cast<limited_api_instancemethod *>(self)->func,
+                                  "__doc__");
+}
+
+inline PyTypeObject *limited_api_instancemethod_type() {
+    static PyTypeObject *type = []() -> PyTypeObject * {
+        static PyMemberDef members[] = {
+            {"__func__",
+             Py_T_OBJECT_EX,
+             offsetof(limited_api_instancemethod, func),
+             Py_READONLY,
+             nullptr},
+            {nullptr, 0, 0, 0, nullptr}};
+        static PyGetSetDef getset[]
+            = {{"__doc__", limited_api_instancemethod_get_doc, nullptr, nullptr, nullptr},
+               {nullptr, nullptr, nullptr, nullptr, nullptr}};
+        static PyType_Slot slots[] = {
+            {Py_tp_dealloc, reinterpret_cast<void *>(limited_api_instancemethod_dealloc)},
+            {Py_tp_traverse, reinterpret_cast<void *>(limited_api_instancemethod_traverse)},
+            {Py_tp_clear, reinterpret_cast<void *>(limited_api_instancemethod_clear)},
+            {Py_tp_descr_get, reinterpret_cast<void *>(limited_api_instancemethod_descr_get)},
+            {Py_tp_call, reinterpret_cast<void *>(limited_api_instancemethod_call)},
+            {Py_tp_getattro, reinterpret_cast<void *>(limited_api_instancemethod_getattro)},
+            {Py_tp_repr, reinterpret_cast<void *>(limited_api_instancemethod_repr)},
+            {Py_tp_members, members},
+            {Py_tp_getset, getset},
+            {0, nullptr}};
+        static PyType_Spec spec = {PYBIND11_INSTANCEMETHOD_TYPE_NAME,
+                                   static_cast<int>(sizeof(limited_api_instancemethod)),
+                                   0,
+                                   Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+                                   slots};
+        PyObject *result = PyType_FromSpec(&spec);
+        if (result == nullptr) {
+            throw error_already_set();
+        }
+        return reinterpret_cast<PyTypeObject *>(result);
+    }();
+    return type;
+}
+
+inline PyObject *limited_api_instancemethod_new(PyObject *func) {
+    PyTypeObject *type = limited_api_instancemethod_type();
+    auto *self = PyObject_GC_New(limited_api_instancemethod, type);
+    if (self == nullptr) {
+        return nullptr;
+    }
+    Py_INCREF(func);
+    self->func = func;
+    PyObject_GC_Track(reinterpret_cast<PyObject *>(self));
+    return reinterpret_cast<PyObject *>(self);
+}
+
+inline bool limited_api_instancemethod_check(PyObject *obj) {
+    PyTypeObject *type = Py_TYPE(obj);
+    if (type == limited_api_instancemethod_type()) {
+        return true;
+    }
+    // Instance methods created by other pybind11 extension modules.
+    return get_tp_name(type) == PYBIND11_INSTANCEMETHOD_TYPE_NAME;
+}
+
+/// Replacement for `_PyType_Lookup`: looks `name` up in the `__dict__` of each type in the MRO,
+/// without invoking descriptors. Returns a new reference, or nullptr (no error set) if not found.
+inline PyObject *limited_api_type_lookup(PyTypeObject *type, PyObject *name) {
+    PyObject *mro = get_type_mro(type);
+    if (mro == nullptr) {
+        PyErr_Clear();
+        return nullptr;
+    }
+    PyObject *result = nullptr;
+    Py_ssize_t size = PyTuple_Size(mro);
+    for (Py_ssize_t index = 0; index < size && result == nullptr; ++index) {
+        PyObject *base_dict = limited_api_type_getattr(
+            reinterpret_cast<PyTypeObject *>(PyTuple_GetItem(mro, index)), "__dict__");
+        if (base_dict == nullptr) {
+            PyErr_Clear();
+            continue;
+        }
+        result = PyObject_GetItem(base_dict, name);
+        if (result == nullptr) {
+            PyErr_Clear();
+        }
+        Py_DECREF(base_dict);
+    }
+    Py_DECREF(mro);
+    return result;
+}
+
+/// Returns a borrowed reference to `obj.__func__` (kept alive by `obj`).
+inline PyObject *limited_api_borrow_func(PyObject *obj) {
+    PyObject *func = PyObject_GetAttrString(obj, "__func__");
+    if (func == nullptr) {
+        throw error_already_set();
+    }
+    Py_DECREF(func);
+    return func;
+}
+#endif
+
 inline handle get_function(handle value) {
     if (value) {
+#if defined(PYBIND11_LIMITED_API)
+        if (limited_api_instancemethod_check(value.ptr())
+            || PyObject_TypeCheck(value.ptr(),
+                                  reinterpret_cast<PyTypeObject *>(limited_api_method_type()))) {
+            value = limited_api_borrow_func(value.ptr());
+        }
+#else
         if (PyInstanceMethod_Check(value.ptr())) {
             value = PyInstanceMethod_GET_FUNCTION(value.ptr());
         } else if (PyMethod_Check(value.ptr())) {
             value = PyMethod_GET_FUNCTION(value.ptr());
         }
+#endif
     }
     return value;
 }
@@ -989,7 +1257,8 @@ inline PyObject *dict_getitem(PyObject *v, PyObject *key) {
 // PyDict_GetItemStringRef was added in Python 3.13.0a1.
 // See also: https://github.com/python/pythoncapi-compat/blob/main/pythoncapi_compat.h
 inline PyObject *dict_getitemstringref(PyObject *v, const char *key) {
-#if PY_VERSION_HEX >= 0x030D00A1
+#if PY_VERSION_HEX >= 0x030D00A1                                                                  \
+    && (!defined(PYBIND11_LIMITED_API) || Py_LIMITED_API + 0 >= 0x030D0000)
     PyObject *rv = nullptr;
     if (PyDict_GetItemStringRef(v, key, &rv) < 0) {
         throw error_already_set();
@@ -1011,7 +1280,14 @@ inline PyObject *dict_setdefaultstring(PyObject *v, const char *key, PyObject *d
         throw error_already_set();
     }
 
+#if defined(PYBIND11_LIMITED_API)
+    PyObject *rv = PyDict_GetItemWithError(v, kv);
+    if (rv == nullptr && !PyErr_Occurred()) {
+        rv = PyDict_SetItem(v, kv, defaultobj) == 0 ? defaultobj : nullptr;
+    }
+#else
     PyObject *rv = PyDict_SetDefault(v, kv, defaultobj);
+#endif
     Py_DECREF(kv);
     if (rv == nullptr) {
         throw error_already_set();
@@ -1022,7 +1298,8 @@ inline PyObject *dict_setdefaultstring(PyObject *v, const char *key, PyObject *d
 // PyDict_SetDefaultRef was added in Python 3.13.0a4.
 // See also: https://github.com/python/pythoncapi-compat/blob/main/pythoncapi_compat.h
 inline PyObject *dict_setdefaultstringref(PyObject *v, const char *key, PyObject *defaultobj) {
-#if PY_VERSION_HEX >= 0x030D00A4
+#if PY_VERSION_HEX >= 0x030D00A4                                                                  \
+    && (!defined(PYBIND11_LIMITED_API) || Py_LIMITED_API + 0 >= 0x030D0000)
     PyObject *kv = PyUnicode_FromString(key);
     if (kv == nullptr) {
         throw error_already_set();
@@ -1298,6 +1575,7 @@ struct arrow_proxy {
     T *operator->() const { return &value; }
 };
 
+#if !defined(PYBIND11_LIMITED_API)
 /// Lightweight iterator policy using just a simple pointer: see ``PySequence_Fast_ITEMS``
 class sequence_fast_readonly {
 protected:
@@ -1320,6 +1598,7 @@ protected:
 private:
     PyObject **ptr;
 };
+#endif
 
 /// Full read and write access using the sequence protocol: see ``detail::sequence_accessor``
 class sequence_slow_readwrite {
@@ -1371,7 +1650,7 @@ private:
 };
 PYBIND11_NAMESPACE_END(iterator_policies)
 
-#if !defined(PYPY_VERSION)
+#if !defined(PYPY_VERSION) && !defined(PYBIND11_LIMITED_API)
 using tuple_iterator = generic_iterator<iterator_policies::sequence_fast_readonly>;
 using list_iterator = generic_iterator<iterator_policies::sequence_fast_readonly>;
 #else
@@ -1404,7 +1683,21 @@ inline bool PyUnicode_Check_Permissive(PyObject *o) {
 #    define PYBIND11_STR_CHECK_FUN PyUnicode_Check
 #endif
 
+#if defined(PYBIND11_LIMITED_API)
+inline bool PyStaticMethod_Check(PyObject *o) {
+    return Py_TYPE(o) == reinterpret_cast<PyTypeObject *>(limited_api_staticmethod_type());
+}
+inline PyObject *PyStaticMethod_New(PyObject *func) {
+    try {
+        return PyObject_CallFunctionObjArgs(limited_api_staticmethod_type(), func, nullptr);
+    } catch (error_already_set &e) {
+        e.restore();
+        return nullptr;
+    }
+}
+#else
 inline bool PyStaticMethod_Check(PyObject *o) { return Py_TYPE(o) == &PyStaticMethod_Type; }
+#endif
 
 class kwargs_proxy : public handle {
 public:
@@ -2359,7 +2652,14 @@ public:
 
 class staticmethod : public object {
 public:
+#if defined(PYBIND11_LIMITED_API)
+    PYBIND11_OBJECT_CVT(staticmethod,
+                        object,
+                        detail::PyStaticMethod_Check,
+                        detail::PyStaticMethod_New)
+#else
     PYBIND11_OBJECT_CVT(staticmethod, object, detail::PyStaticMethod_Check, PyStaticMethod_New)
+#endif
 };
 
 class buffer : public object {
@@ -2549,7 +2849,11 @@ inline size_t len(handle h) {
 /// Get the length hint of a Python object.
 /// Returns 0 when this cannot be determined.
 inline size_t len_hint(handle h) {
+#if defined(PYBIND11_LIMITED_API)
+    ssize_t result = PyObject_Size(h.ptr());
+#else
     ssize_t result = PyObject_LengthHint(h.ptr(), 0);
+#endif
     if (result < 0) {
         // Sometimes a length can't be determined at all (eg generators)
         // In which case simply return 0

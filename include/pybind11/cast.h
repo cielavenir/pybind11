@@ -447,8 +447,8 @@ public:
             if (src.is_none()) {
                 res = 0; // None is implicitly converted to False
             }
-#if defined(PYPY_VERSION)
-            // On PyPy, check that "__bool__" attr exists
+#if defined(PYPY_VERSION) || defined(PYBIND11_LIMITED_API)
+            // On PyPy (and with the limited API), check that "__bool__" attr exists
             else if (hasattr(src, PYBIND11_BOOL_ATTR)) {
                 res = PyObject_IsTrue(src.ptr());
             }
@@ -477,10 +477,9 @@ public:
 private:
     // Test if an object is a NumPy boolean (without fetching the type).
     static bool is_numpy_bool(handle object) {
-        const char *type_name = Py_TYPE(object.ptr())->tp_name;
+        const std::string type_name = get_tp_name(Py_TYPE(object.ptr()));
         // Name changed to `numpy.bool` in NumPy 2, `numpy.bool_` is needed for 1.x support
-        return std::strcmp("numpy.bool", type_name) == 0
-               || std::strcmp("numpy.bool_", type_name) == 0;
+        return type_name == "numpy.bool" || type_name == "numpy.bool_";
     }
 };
 
@@ -1172,8 +1171,8 @@ std::weak_ptr<T> potentially_slicing_weak_ptr(handle obj) {
     if (caster.load(obj, /*convert=*/true)) {
         return caster.potentially_slicing_weak_ptr();
     }
-    const char *obj_type_name = detail::obj_class_name(obj.ptr());
-    throw type_error("\"" + std::string(obj_type_name)
+    std::string obj_type_name = detail::obj_class_name(obj.ptr());
+    throw type_error("\"" + obj_type_name
                      + "\" object is not convertible to std::weak_ptr<T> (with T = " + type_id<T>()
                      + ")");
 }
@@ -2412,7 +2411,7 @@ unpacking_collector<policy> collect_arguments(Args &&...args) {
 template <typename Derived>
 template <return_value_policy policy, typename... Args>
 object object_api<Derived>::operator()(Args &&...args) const {
-#ifndef NDEBUG
+#if !defined(NDEBUG) && !defined(PYBIND11_LIMITED_API)
     if (!PyGILState_Check()) {
         pybind11_fail("pybind11::object_api<>::operator() PyGILState_Check() failure.");
     }

@@ -107,7 +107,13 @@ struct metaclass {
 /// implementation of `make_new_python_type` in `detail/classes.h` to understand
 /// the context in which the callback will be run.
 struct custom_type_setup {
+#if defined(PYBIND11_LIMITED_API)
+    // With the limited API, `PyHeapTypeObject` is opaque and types are created in one step with
+    // `PyType_FromMetaclass`, so the callback receives the type *after* it has been created.
+    using callback = std::function<void(PyTypeObject *type)>;
+#else
     using callback = std::function<void(PyHeapTypeObject *heap_type)>;
+#endif
 
     explicit custom_type_setup(callback value) : value(std::move(value)) {}
 
@@ -376,7 +382,7 @@ struct type_record {
         bases.append(reinterpret_cast<PyObject *>(base_info->type));
 
 #ifdef PYBIND11_BACKWARD_COMPATIBILITY_TP_DICTOFFSET
-        dynamic_attr |= base_info->type->tp_dictoffset != 0;
+        dynamic_attr |= get_type_dictoffset(base_info->type) > 0;
 #else
         dynamic_attr |= (PyType_GetFlags(base_info->type) & Py_TPFLAGS_MANAGED_DICT) != 0;
 #endif

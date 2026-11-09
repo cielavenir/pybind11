@@ -226,6 +226,74 @@
 #    define PYBIND11_SIMPLE_GIL_MANAGEMENT
 #endif
 
+// Stable ABI (Py_LIMITED_API) support.
+// Requires Python 3.12+ (PyType_FromMetaclass, PyObject_Vectorcall).
+#if defined(Py_LIMITED_API)
+#    define PYBIND11_LIMITED_API
+#    if Py_LIMITED_API + 0 < 0x030C0000
+#        error "pybind11 requires Py_LIMITED_API >= 0x030C0000 (Python 3.12)"
+#    endif
+#    if !defined(PYBIND11_SIMPLE_GIL_MANAGEMENT)
+#        define PYBIND11_SIMPLE_GIL_MANAGEMENT
+#    endif
+// PyGILState_Check() is not part of the limited API.
+#    if !defined(PYBIND11_NO_ASSERT_GIL_HELD_INCREF_DECREF)
+#        define PYBIND11_NO_ASSERT_GIL_HELD_INCREF_DECREF
+#    endif
+// Subinterpreter support relies on non-limited interpreter-state APIs.
+#    undef PYBIND11_HAS_SUBINTERPRETER_SUPPORT
+#    define PYBIND11_HAS_SUBINTERPRETER_SUPPORT 0
+// Use an explicit __dict__ slot instead of Py_TPFLAGS_MANAGED_DICT.
+#    define PYBIND11_BACKWARD_COMPATIBILITY_TP_DICTOFFSET
+// Map the unchecked macros (not available in the limited API) to checked functions.
+#    ifndef PyTuple_GET_ITEM
+#        define PyTuple_GET_ITEM(op, i) PyTuple_GetItem((op), (i))
+#    endif
+#    ifndef PyTuple_SET_ITEM
+#        define PyTuple_SET_ITEM(op, i, v) ((void) PyTuple_SetItem((op), (i), (v)))
+#    endif
+#    ifndef PyTuple_GET_SIZE
+#        define PyTuple_GET_SIZE(op) PyTuple_Size(op)
+#    endif
+#    ifndef PyList_GET_ITEM
+#        define PyList_GET_ITEM(op, i) PyList_GetItem((op), (i))
+#    endif
+#    ifndef PyList_SET_ITEM
+#        define PyList_SET_ITEM(op, i, v) ((void) PyList_SetItem((op), (i), (v)))
+#    endif
+#    ifndef PyList_GET_SIZE
+#        define PyList_GET_SIZE(op) PyList_Size(op)
+#    endif
+#    ifndef PyByteArray_AS_STRING
+#        define PyByteArray_AS_STRING(op) PyByteArray_AsString(op)
+#    endif
+#    ifndef PyByteArray_GET_SIZE
+#        define PyByteArray_GET_SIZE(op) PyByteArray_Size(op)
+#    endif
+#    ifndef PyCFunction_GET_SELF
+#        define PyCFunction_GET_SELF(op) PyCFunction_GetSelf(op)
+#    endif
+// Like the non-limited headers, accept any PyObject-compatible pointer (e.g. `instance *`).
+#    ifndef Py_TYPE
+#        define Py_TYPE(ob) Py_TYPE(_PyObject_CAST(ob))
+#    endif
+#    ifndef Py_REFCNT
+#        define Py_REFCNT(ob) Py_REFCNT(_PyObject_CAST(ob))
+#    endif
+#    ifndef Py_INCREF
+#        define Py_INCREF(op) Py_INCREF(_PyObject_CAST(op))
+#    endif
+#    ifndef Py_DECREF
+#        define Py_DECREF(op) Py_DECREF(_PyObject_CAST(op))
+#    endif
+#    ifndef Py_XINCREF
+#        define Py_XINCREF(op) Py_XINCREF(_PyObject_CAST(op))
+#    endif
+#    ifndef Py_XDECREF
+#        define Py_XDECREF(op) Py_XDECREF(_PyObject_CAST(op))
+#    endif
+#endif
+
 #include <cstddef>
 #include <cstring>
 #include <exception>
@@ -328,9 +396,16 @@
 //               behavior.
 
 /// Compatibility macros for Python 2 / Python 3 versions TODO: remove
-#define PYBIND11_INSTANCE_METHOD_NEW(ptr, class_) PyInstanceMethod_New(ptr)
-#define PYBIND11_INSTANCE_METHOD_CHECK PyInstanceMethod_Check
-#define PYBIND11_INSTANCE_METHOD_GET_FUNCTION PyInstanceMethod_GET_FUNCTION
+#if defined(PYBIND11_LIMITED_API)
+#    define PYBIND11_INSTANCE_METHOD_NEW(ptr, class_)                                             \
+        ::pybind11::detail::limited_api_instancemethod_new(ptr)
+#    define PYBIND11_INSTANCE_METHOD_CHECK ::pybind11::detail::limited_api_instancemethod_check
+#    define PYBIND11_INSTANCE_METHOD_GET_FUNCTION ::pybind11::detail::limited_api_borrow_func
+#else
+#    define PYBIND11_INSTANCE_METHOD_NEW(ptr, class_) PyInstanceMethod_New(ptr)
+#    define PYBIND11_INSTANCE_METHOD_CHECK PyInstanceMethod_Check
+#    define PYBIND11_INSTANCE_METHOD_GET_FUNCTION PyInstanceMethod_GET_FUNCTION
+#endif
 #define PYBIND11_BYTES_CHECK PyBytes_Check
 #define PYBIND11_BYTES_FROM_STRING PyBytes_FromString
 #define PYBIND11_BYTES_FROM_STRING_AND_SIZE PyBytes_FromStringAndSize
@@ -354,7 +429,9 @@
 #define PYBIND11_FROM_STRING PyUnicode_FromString
 #define PYBIND11_STR_TYPE ::pybind11::str
 #define PYBIND11_BOOL_ATTR "__bool__"
-#define PYBIND11_NB_BOOL(ptr) ((ptr)->nb_bool)
+#if !defined(PYBIND11_LIMITED_API)
+#    define PYBIND11_NB_BOOL(ptr) ((ptr)->nb_bool)
+#endif
 #define PYBIND11_BUILTINS_MODULE "builtins"
 // Providing a separate declaration to make Clang's -Wmissing-prototypes happy.
 // See comment for PYBIND11_MODULE below for why this is marked "maybe unused".
@@ -374,7 +451,9 @@
         pybind11::detail::get_internals();                                                        \
     }
 
-#if !defined(GRAALVM_PYTHON)
+#if defined(PYBIND11_LIMITED_API)
+// PyCFunctionObject is opaque; pybind11 keeps the PyMethodDef in the function_record instead.
+#elif !defined(GRAALVM_PYTHON)
 #    define PYBIND11_PYCFUNCTION_GET_DOC(func) ((func)->m_ml->ml_doc)
 #    define PYBIND11_PYCFUNCTION_SET_DOC(func, doc)                                               \
         do {                                                                                      \
@@ -388,6 +467,21 @@
         } while (0)
 #endif
 
+#if defined(PYBIND11_LIMITED_API)
+// Stable ABI: any interpreter at least as new as Py_LIMITED_API is acceptable.
+#    define PYBIND11_CHECK_PYTHON_VERSION                                                         \
+        {                                                                                         \
+            if (Py_Version < (Py_LIMITED_API & ~0xFF)) {                                          \
+                PyErr_Format(PyExc_ImportError,                                                   \
+                             "Python version mismatch: module requires Python >= %d.%d, "         \
+                             "but the interpreter version is %s.",                                \
+                             (Py_LIMITED_API >> 24) & 0xFF,                                       \
+                             (Py_LIMITED_API >> 16) & 0xFF,                                       \
+                             Py_GetVersion());                                                    \
+                return nullptr;                                                                   \
+            }                                                                                     \
+        }
+#else
 #define PYBIND11_CHECK_PYTHON_VERSION                                                             \
     {                                                                                             \
         const char *compiled_ver                                                                  \
@@ -404,6 +498,7 @@
             return nullptr;                                                                       \
         }                                                                                         \
     }
+#endif
 
 #define PYBIND11_CATCH_INIT_EXCEPTIONS                                                            \
     catch (pybind11::error_already_set & e) {                                                     \
@@ -1349,6 +1444,112 @@ public:
 
 // Forward-declaration; see detail/class.h
 std::string get_fully_qualified_tp_name(PyTypeObject *);
+
+#if defined(PYBIND11_LIMITED_API)
+inline std::string limited_api_utf8(PyObject *str_obj) {
+    std::string result;
+    if (str_obj != nullptr) {
+        Py_ssize_t size = 0;
+        const char *data = PyUnicode_AsUTF8AndSize(str_obj, &size);
+        if (data != nullptr) {
+            result.assign(data, static_cast<size_t>(size));
+        } else {
+            PyErr_Clear();
+        }
+        Py_DECREF(str_obj);
+    } else {
+        PyErr_Clear();
+    }
+    return result;
+}
+#endif
+
+#if defined(PYBIND11_LIMITED_API)
+/// `getattr(type, name)` using `type.__getattribute__` directly, bypassing any metaclass
+/// override (pybind11's metaclass `tp_getattro` itself relies on this). New reference.
+inline PyObject *limited_api_type_getattr(PyTypeObject *type, const char *name) {
+    PyObject *name_obj = PyUnicode_InternFromString(name);
+    if (name_obj == nullptr) {
+        return nullptr;
+    }
+    auto type_getattro
+        = reinterpret_cast<getattrofunc>(PyType_GetSlot(&PyType_Type, Py_tp_getattro));
+    PyObject *result = type_getattro(reinterpret_cast<PyObject *>(type), name_obj);
+    Py_DECREF(name_obj);
+    return result;
+}
+
+/// Reads an integer attribute of a type object (e.g. `__dictoffset__`); -1 on failure.
+inline Py_ssize_t limited_api_type_ssize_attr(PyTypeObject *type, const char *name) {
+    PyObject *value = limited_api_type_getattr(type, name);
+    if (value == nullptr) {
+        PyErr_Clear();
+        return -1;
+    }
+    Py_ssize_t result = PyLong_AsSsize_t(value);
+    Py_DECREF(value);
+    if (result == -1 && PyErr_Occurred()) {
+        PyErr_Clear();
+    }
+    return result;
+}
+#endif
+
+/// Equivalent of `type->tp_bases` (new reference).
+inline PyObject *get_type_bases(PyTypeObject *type) {
+#if defined(PYBIND11_LIMITED_API)
+    return limited_api_type_getattr(type, "__bases__");
+#else
+    Py_XINCREF(type->tp_bases);
+    return type->tp_bases;
+#endif
+}
+
+/// Equivalent of `type->tp_mro` (new reference).
+inline PyObject *get_type_mro(PyTypeObject *type) {
+#if defined(PYBIND11_LIMITED_API)
+    return limited_api_type_getattr(type, "__mro__");
+#else
+    Py_XINCREF(type->tp_mro);
+    return type->tp_mro;
+#endif
+}
+
+/// Equivalent of `type->tp_dictoffset`.
+inline Py_ssize_t get_type_dictoffset(PyTypeObject *type) {
+#if defined(PYBIND11_LIMITED_API)
+    return limited_api_type_ssize_attr(type, "__dictoffset__");
+#else
+    return type->tp_dictoffset;
+#endif
+}
+
+/// Equivalent of `type->tp_basicsize`.
+inline Py_ssize_t get_type_basicsize(PyTypeObject *type) {
+#if defined(PYBIND11_LIMITED_API)
+    return limited_api_type_ssize_attr(type, "__basicsize__");
+#else
+    return type->tp_basicsize;
+#endif
+}
+
+/// Equivalent of `type->tp_name` (e.g. "module.Name", or "int" for builtins).
+inline std::string get_tp_name(PyTypeObject *type) {
+#if defined(PYBIND11_LIMITED_API)
+    // Do not clobber an exception that may be in flight.
+    PyObject *exc_type = nullptr, *exc_value = nullptr, *exc_trace = nullptr;
+    PyErr_Fetch(&exc_type, &exc_value, &exc_trace);
+    std::string qualname = limited_api_utf8(PyType_GetQualName(type));
+    std::string module_name = limited_api_utf8(limited_api_type_getattr(type, "__module__"));
+    PyErr_Restore(exc_type, exc_value, exc_trace);
+    if (module_name.empty() || module_name == "builtins") {
+        return qualname;
+    }
+    return module_name + "." + qualname;
+#else
+    return type->tp_name;
+#endif
+}
 
 template <typename T>
 inline static std::shared_ptr<T>

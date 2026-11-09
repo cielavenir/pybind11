@@ -79,9 +79,9 @@ inline bool object_is_instance_with_one_of_tp_names(PyObject *obj,
     if (PyType_Check(obj)) {
         return false;
     }
-    const char *obj_tp_name = Py_TYPE(obj)->tp_name;
+    const std::string obj_tp_name = get_tp_name(Py_TYPE(obj));
     for (const auto *tp_name : tp_names) {
-        if (std::strcmp(obj_tp_name, tp_name) == 0) {
+        if (obj_tp_name == tp_name) {
             return true;
         }
     }

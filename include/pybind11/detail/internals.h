@@ -52,8 +52,18 @@ using ExceptionTranslator = void (*)(std::exception_ptr);
 
 // The old Python Thread Local Storage (TLS) API is deprecated in Python 3.7 in favor of the new
 // Thread Specific Storage (TSS) API.
-// Avoid unnecessary allocation of `Py_tss_t`, since we cannot use
-// `Py_LIMITED_API` anyway.
+#if defined(PYBIND11_LIMITED_API)
+// `Py_tss_t` is opaque in the limited API, so it has to be heap-allocated.
+#    define PYBIND11_TLS_KEY_REF Py_tss_t *
+#    define PYBIND11_TLS_KEY_INIT(var) Py_tss_t *var = PyThread_tss_alloc();
+#    define PYBIND11_TLS_KEY_MEMBER(var) PYBIND11_TLS_KEY_INIT(var)
+#    define PYBIND11_TLS_KEY_CREATE(var) ((var) != nullptr && PyThread_tss_create(var) == 0)
+#    define PYBIND11_TLS_GET_VALUE(key) PyThread_tss_get(key)
+#    define PYBIND11_TLS_REPLACE_VALUE(key, value) PyThread_tss_set((key), (value))
+#    define PYBIND11_TLS_DELETE_VALUE(key) PyThread_tss_set((key), nullptr)
+#    define PYBIND11_TLS_FREE(key) PyThread_tss_free(key)
+#else
+// Avoid unnecessary allocation of `Py_tss_t`.
 #define PYBIND11_TLS_KEY_REF Py_tss_t &
 #if defined(__clang__)
 #    define PYBIND11_TLS_KEY_INIT(var)                                                            \
@@ -75,6 +85,8 @@ using ExceptionTranslator = void (*)(std::exception_ptr);
 #define PYBIND11_TLS_REPLACE_VALUE(key, value) PyThread_tss_set(&(key), (value))
 #define PYBIND11_TLS_DELETE_VALUE(key) PyThread_tss_set(&(key), nullptr)
 #define PYBIND11_TLS_FREE(key) PyThread_tss_delete(&(key))
+#define PYBIND11_TLS_KEY_MEMBER(var) PYBIND11_TLS_KEY_INIT(mutable var)
+#endif
 
 /// A smart-pointer-like wrapper around a thread-specific value. get/set of the pointer applies to
 /// the current thread only.
@@ -127,7 +139,7 @@ public:
     }
 
 private:
-    PYBIND11_TLS_KEY_INIT(mutable key_)
+    PYBIND11_TLS_KEY_MEMBER(key_)
 };
 
 PYBIND11_NAMESPACE_BEGIN(detail)
@@ -142,7 +154,10 @@ inline PyObject *make_object_base_type(PyTypeObject *metaclass);
 inline void translate_exception(std::exception_ptr p);
 
 inline PyThreadState *get_thread_state_unchecked() {
-#if defined(PYPY_VERSION) || defined(GRAALVM_PYTHON)
+#if defined(PYBIND11_LIMITED_API)
+    // Returns nullptr (instead of aborting) if this thread has no thread state.
+    return PyGILState_GetThisThreadState();
+#elif defined(PYPY_VERSION) || defined(GRAALVM_PYTHON)
     return PyThreadState_GET();
 #elif PY_VERSION_HEX < 0x030D0000
     return _PyThreadState_UncheckedGet();
@@ -153,7 +168,11 @@ inline PyThreadState *get_thread_state_unchecked() {
 
 inline PyInterpreterState *get_interpreter_state_unchecked() {
     auto *tstate = get_thread_state_unchecked();
+#if defined(PYBIND11_LIMITED_API)
+    return tstate ? PyThreadState_GetInterpreter(tstate) : nullptr;
+#else
     return tstate ? tstate->interp : nullptr;
+#endif
 }
 
 inline object get_python_state_dict() {

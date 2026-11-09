@@ -135,7 +135,7 @@ inline void all_type_info_add_base_most_derived_first(std::vector<type_info *> &
 PYBIND11_NOINLINE void all_type_info_populate(PyTypeObject *t, std::vector<type_info *> &bases) {
     assert(bases.empty());
     std::vector<PyTypeObject *> check;
-    for (handle parent : reinterpret_borrow<tuple>(t->tp_bases)) {
+    for (handle parent : reinterpret_steal<tuple>(get_type_bases(t))) {
         check.push_back(reinterpret_cast<PyTypeObject *>(parent.ptr()));
     }
     auto const &type_dict = get_internals().registered_types_py;
@@ -168,7 +168,7 @@ PYBIND11_NOINLINE void all_type_info_populate(PyTypeObject *t, std::vector<type_
                     all_type_info_add_base_most_derived_first(bases, tinfo);
                 }
             }
-        } else if (type->tp_bases) {
+        } else if (auto type_bases = reinterpret_steal<object>(get_type_bases(type))) {
             // It's some python type, so keep follow its bases classes to look for one or more
             // registered types
             if (i + 1 == check.size()) {
@@ -178,7 +178,7 @@ PYBIND11_NOINLINE void all_type_info_populate(PyTypeObject *t, std::vector<type_
                 check.pop_back();
                 i--;
             }
-            for (handle parent : reinterpret_borrow<tuple>(type->tp_bases)) {
+            for (handle parent : reinterpret_borrow<tuple>(type_bases)) {
                 check.push_back(reinterpret_cast<PyTypeObject *>(parent.ptr()));
             }
         }
