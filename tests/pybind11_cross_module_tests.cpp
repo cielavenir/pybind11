@@ -16,7 +16,16 @@
 #include <numeric>
 #include <utility>
 
-PYBIND11_MODULE(pybind11_cross_module_tests, m) {
+class CrossDSOClass {
+public:
+    CrossDSOClass() = default;
+    virtual ~CrossDSOClass();
+    CrossDSOClass(const CrossDSOClass &) = default;
+};
+
+CrossDSOClass::~CrossDSOClass() = default;
+
+PYBIND11_MODULE(pybind11_cross_module_tests, m, py::mod_gil_not_used()) {
     m.doc() = "pybind11 cross-module test module";
 
     // test_local_bindings.py tests:
@@ -26,16 +35,18 @@ PYBIND11_MODULE(pybind11_cross_module_tests, m) {
 
     // test_load_external
     bind_local<ExternalType1>(m, "ExternalType1", py::module_local());
-    bind_local<ExternalType2>(m, "ExternalType2", py::module_local());
+    bind_local<ExternalType2, 0, std::shared_ptr<ExternalType2>>(
+        m, "ExternalType2", py::module_local());
+    bind_local<ExternalType3, 0, py::smart_holder>(m, "ExternalType3", py::module_local());
 
     // test_exceptions.py
     py::register_local_exception<LocalSimpleException>(m, "LocalSimpleException");
     m.def("raise_runtime_error", []() {
-        PyErr_SetString(PyExc_RuntimeError, "My runtime error");
+        py::set_error(PyExc_RuntimeError, "My runtime error");
         throw py::error_already_set();
     });
     m.def("raise_value_error", []() {
-        PyErr_SetString(PyExc_ValueError, "My value error");
+        py::set_error(PyExc_ValueError, "My value error");
         throw py::error_already_set();
     });
     m.def("throw_pybind_value_error", []() { throw py::value_error("pybind11 value error"); });
@@ -49,7 +60,7 @@ PYBIND11_MODULE(pybind11_cross_module_tests, m) {
                 std::rethrow_exception(p);
             }
         } catch (const shared_exception &e) {
-            PyErr_SetString(PyExc_KeyError, e.what());
+            py::set_error(PyExc_KeyError, e.what());
         }
     });
 
@@ -60,7 +71,7 @@ PYBIND11_MODULE(pybind11_cross_module_tests, m) {
                 std::rethrow_exception(p);
             }
         } catch (const LocalException &e) {
-            PyErr_SetString(PyExc_KeyError, e.what());
+            py::set_error(PyExc_KeyError, e.what());
         }
     });
 
@@ -146,4 +157,7 @@ PYBIND11_MODULE(pybind11_cross_module_tests, m) {
     // which appears when this header is missing.
     m.def("missing_header_arg", [](const std::vector<float> &) {});
     m.def("missing_header_return", []() { return std::vector<float>(); });
+
+    // test_class_cross_module_use_after_one_module_dealloc
+    m.def("consume_cross_dso_class", [](const CrossDSOClass &) {});
 }

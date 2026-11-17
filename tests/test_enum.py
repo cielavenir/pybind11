@@ -1,3 +1,8 @@
+# ruff: noqa: SIM201 SIM300 SIM202
+from __future__ import annotations
+
+import re
+
 import pytest
 
 from pybind11_tests import enums as m
@@ -50,17 +55,13 @@ def test_unscoped_enum():
         "EThree": m.UnscopedEnum.EThree,
     }
 
-    for docstring_line in """An unscoped enumeration
-
-Members:
-
-  EOne : Docstring for EOne
-
-  ETwo : Docstring for ETwo
-
-  EThree : Docstring for EThree""".split(
-        "\n"
-    ):
+    for docstring_line in [
+        "An unscoped enumeration",
+        "Members:",
+        "  EOne : Docstring for EOne",
+        "  ETwo : Docstring for ETwo",
+        "  EThree : Docstring for EThree",
+    ]:
         assert docstring_line in m.UnscopedEnum.__doc__
 
     # Unscoped enums will accept ==/!= int comparisons
@@ -262,3 +263,94 @@ def test_docstring_signatures():
         for attr in enum_type.__dict__.values():
             # Issue #2623/PR #2637: Add argument names to enum_ methods
             assert "arg0" not in (attr.__doc__ or "")
+
+
+def test_str_signature():
+    for enum_type in [m.ScopedEnum, m.UnscopedEnum]:
+        assert enum_type.__str__.__doc__.startswith("__str__")
+
+
+def test_enum_custom_str_keeps_name_property():
+    assert str(m.CustomStrEnum.A) == "CustomStrEnum value 1"
+    assert str(m.CustomStrEnum.B) == "CustomStrEnum value 2"
+    assert m.CustomStrEnum.A.name == "A"
+    assert m.CustomStrEnum.A.value == 1
+    assert m.CustomStrEnum.B.name == "B"
+    assert m.CustomStrEnum.B.value == 2
+
+
+def test_generated_dunder_methods_pos_only():
+    for enum_type in [m.ScopedEnum, m.UnscopedEnum]:
+        for binary_op in [
+            "__eq__",
+            "__ne__",
+            "__ge__",
+            "__gt__",
+            "__lt__",
+            "__le__",
+            "__and__",
+            "__rand__",
+            # "__or__",  # fail with some compilers (__doc__ = "Return self|value.")
+            # "__ror__",  # fail with some compilers (__doc__ = "Return value|self.")
+            "__xor__",
+            "__rxor__",
+            "__rxor__",
+        ]:
+            method = getattr(enum_type, binary_op, None)
+            if method is not None:
+                # 1) The docs must start with the name of the op.
+                assert (
+                    re.match(
+                        rf"^{binary_op}\(",
+                        method.__doc__,
+                    )
+                    is not None
+                )
+                # 2) The docs must contain the op's signature. This is a separate check
+                # and not anchored at the start because the op may be overloaded.
+                assert (
+                    re.search(
+                        rf"{binary_op}\(self: [\w\.]+, other: [\w\.]+, /\)",
+                        method.__doc__,
+                    )
+                    is not None
+                )
+        for unary_op in [
+            "__int__",
+            "__index__",
+            "__hash__",
+            "__str__",
+            "__repr__",
+        ]:
+            method = getattr(enum_type, unary_op, None)
+            if method is not None:
+                assert (
+                    re.match(
+                        rf"^{unary_op}\(self: [\w\.]+, /\)",
+                        method.__doc__,
+                    )
+                    is not None
+                )
+        assert (
+            re.match(
+                r"^__getstate__\(self: [\w\.]+, /\)",
+                enum_type.__getstate__.__doc__,
+            )
+            is not None
+        )
+        assert (
+            re.match(
+                r"^__setstate__\(self: [\w\.]+, state: [\w\. \|]+, /\)",
+                enum_type.__setstate__.__doc__,
+            )
+            is not None
+        )
+
+
+@pytest.mark.skipif(
+    isinstance(m.obj_cast_UnscopedEnum_ptr, str), reason=m.obj_cast_UnscopedEnum_ptr
+)
+def test_obj_cast_unscoped_enum_ptr():
+    assert m.obj_cast_UnscopedEnum_ptr(m.UnscopedEnum.ETwo) == 2
+    assert m.obj_cast_UnscopedEnum_ptr(m.UnscopedEnum.EOne) == 1
+    assert m.obj_cast_UnscopedEnum_ptr(None) == 0
